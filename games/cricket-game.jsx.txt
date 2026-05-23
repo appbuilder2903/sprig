@@ -1,0 +1,1092 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+
+// ══════════════════════════════════════════════════════════════════
+//  CONSTANTS & DATA
+// ══════════════════════════════════════════════════════════════════
+const SHOT_ZONES = [
+  { id: "drive",      label: "Drive",       angle: 0,   risk: 0.12, reward: [1,2,4],    timing: 320 },
+  { id: "pull",       label: "Pull",        angle: 45,  risk: 0.18, reward: [2,4,6],    timing: 280 },
+  { id: "cut",        label: "Cut",         angle: 90,  risk: 0.15, reward: [2,4,4],    timing: 300 },
+  { id: "glance",     label: "Glance",      angle: 135, risk: 0.10, reward: [1,2,3],    timing: 350 },
+  { id: "sweep",      label: "Sweep",       angle: 180, risk: 0.20, reward: [1,4,6],    timing: 260 },
+  { id: "lofted",     label: "Lofted",      angle: 225, risk: 0.30, reward: [4,6,6],    timing: 240 },
+  { id: "defense",    label: "Defend",      angle: 270, risk: 0.03, reward: [0,0,1],    timing: 400 },
+  { id: "flick",      label: "Flick",       angle: 315, risk: 0.16, reward: [1,2,4],    timing: 310 },
+];
+
+const DELIVERY_TYPES = [
+  { id: "straight",   label: "Straight",    swing: 0,   bounce: 0.5, speed: 140 },
+  { id: "outswinger", label: "Out Swing",   swing: 0.3, bounce: 0.4, speed: 138 },
+  { id: "inswinger",  label: "In Swing",    swing: -0.3,bounce: 0.4, speed: 136 },
+  { id: "bouncer",    label: "Bouncer",     swing: 0,   bounce: 0.9, speed: 148 },
+  { id: "yorker",     label: "Yorker",      swing: 0,   bounce: 0.1, speed: 145 },
+  { id: "offbreak",   label: "Off Break",   swing: 0.4, bounce: 0.55,speed: 92  },
+  { id: "legbreak",   label: "Leg Break",   swing: -0.4,bounce: 0.6, speed: 90  },
+  { id: "googly",     label: "Googly",      swing: 0.5, bounce: 0.65,speed: 88  },
+];
+
+const PLAYERS = {
+  bat: [
+    { name: "Virat Kohli",    bat: 96, bowl: 30, field: 88, style: "Classic" },
+    { name: "Rohit Sharma",   bat: 94, bowl: 25, field: 82, style: "Aggressive" },
+    { name: "KL Rahul",       bat: 90, bowl: 20, field: 84, style: "Technical" },
+    { name: "Suryakumar",     bat: 92, bowl: 18, field: 86, style: "360°" },
+    { name: "Hardik Pandya",  bat: 84, bowl: 85, field: 90, style: "Aggressive" },
+    { name: "Ravindra Jadeja",bat: 78, bowl: 92, field: 98, style: "Defensive" },
+    { name: "Rishabh Pant",   bat: 86, bowl: 10, field: 80, style: "Aggressive" },
+    { name: "Shubman Gill",   bat: 88, bowl: 15, field: 85, style: "Classic" },
+    { name: "Axar Patel",     bat: 72, bowl: 88, field: 86, style: "Defensive" },
+    { name: "Jasprit Bumrah", bat: 22, bowl: 98, field: 84, style: "Defensive" },
+    { name: "Mohammed Siraj", bat: 18, bowl: 90, field: 80, style: "Defensive" },
+  ],
+  bowl: [
+    { name: "Australia",   aggression: 0.75, patience: 0.65, spinAffinity: 0.30 },
+    { name: "England",     aggression: 0.60, patience: 0.70, spinAffinity: 0.40 },
+    { name: "South Africa",aggression: 0.80, patience: 0.60, spinAffinity: 0.25 },
+    { name: "Pakistan",    aggression: 0.70, patience: 0.75, spinAffinity: 0.55 },
+    { name: "New Zealand", aggression: 0.55, patience: 0.80, spinAffinity: 0.35 },
+    { name: "West Indies", aggression: 0.85, patience: 0.50, spinAffinity: 0.40 },
+  ],
+};
+
+const STADIUMS = [
+  { name: "Eden Gardens",    pitch: "flat",    crowd: 66000, city: "Kolkata" },
+  { name: "Wankhede Stadium",pitch: "bouncy",  crowd: 33108, city: "Mumbai"  },
+  { name: "MCG",             pitch: "seaming", crowd: 100024,city: "Melbourne"},
+  { name: "Lord's",          pitch: "swinging",crowd: 28000, city: "London"  },
+  { name: "The Oval",        pitch: "dry",     crowd: 25500, city: "London"  },
+];
+
+const COMMENTARY = {
+  six:      ["MAXIMUM! That's gone into orbit!","What a shot! Six all the way!","Absolutely CREAMED over the boundary!","The crowd is on their feet — SIX!","That is just OUTRAGEOUS hitting!"],
+  four:     ["FOUR! Pierces the gap perfectly","Rasping drive — four runs!","Clipped elegantly to the fence","Cuts it away — four more!","Beautiful stroke play — boundary!"],
+  wicket:   ["OUT! What a breakthrough!","BOWLED HIM! The stumps are shattered!","CAUGHT! The fielder takes a sharp one!","That's a big wicket — gone!","Edges it — caught behind!"],
+  dot:      ["Good delivery — defended solidly","Tight line, no run there","Maiden territory brewing","Excellent bowling — no room given","Kept out well but no run"],
+  one:      ["Worked away for a single","Quick single — good running","Pushed into the gap, they run","Nudged away — one run"],
+  two:      ["Good running between the wickets — two runs","Placed well — they come back for two","Driven and they push hard — two!"],
+  three:    ["Three! Great placement and superb running!","Run hard between the wickets — three runs!"],
+  wide:     ["WIDE! That was well outside off stump","Umpire signals wide — extra delivery","Too wide — the batter leaves it"],
+  noball:   ["NO BALL! Free hit incoming!","Front foot over the crease — no ball!"],
+  milestone:["FIFTY UP! What a knock this has been!","CENTURY! Absolutely magnificent innings!","Five-for the bowler — incredible spell!"],
+};
+
+const pickComment = (type) => {
+  const arr = COMMENTARY[type] || ["..."];
+  return arr[Math.floor(Math.random() * arr.length)];
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  PHYSICS ENGINE
+// ══════════════════════════════════════════════════════════════════
+const calcDelivery = (delivery, pitchType, wear) => {
+  const base = DELIVERY_TYPES.find(d => d.id === delivery) || DELIVERY_TYPES[0];
+  const wearMod = wear / 80;
+  const pitchMod = pitchType === "bouncy" ? 1.2 : pitchType === "flat" ? 0.8 : 1.0;
+  const swingMod = pitchType === "swinging" ? 1.4 : pitchType === "dry" ? 0.5 : 1.0;
+  return {
+    speed: base.speed + Math.random() * 4 - 2,
+    swing: base.swing * swingMod * (1 + wearMod * 0.3),
+    bounce: base.bounce * pitchMod,
+    danger: Math.abs(base.swing) * 0.4 + (base.bounce > 0.7 ? 0.3 : 0) + (base.speed > 140 ? 0.2 : 0),
+  };
+};
+
+const resolveShot = (shot, delivery, timing, batRating) => {
+  const timingPct = Math.max(0, Math.min(1, timing));
+  const center = 0.5;
+  const timingBonus = 1 - Math.abs(timingPct - center) * 2;
+  const deliveryDanger = delivery.danger;
+  const shotData = SHOT_ZONES.find(s => s.id === shot) || SHOT_ZONES[0];
+  const baseRisk = shotData.risk + deliveryDanger * 0.2 - (batRating / 100) * 0.1;
+  const effectiveRisk = baseRisk * (1 - timingBonus * 0.4);
+  const isOut = Math.random() < effectiveRisk;
+  if (isOut) return { runs: 0, isOut: true, type: delivery.bounce > 0.7 ? "caught" : Math.random() > 0.5 ? "bowled" : "lbw" };
+  const rewards = shotData.reward;
+  const runIdx = timingBonus > 0.7 ? 2 : timingBonus > 0.4 ? 1 : 0;
+  const runs = rewards[runIdx] + (timingBonus > 0.85 && Math.random() > 0.7 ? 2 : 0);
+  return { runs: Math.min(6, runs), isOut: false, type: "hit" };
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  AI ENGINE
+// ══════════════════════════════════════════════════════════════════
+const aiSelectDelivery = (state, personality) => {
+  const { ballsLeft, wickets, target, battingScore, shotHistory } = state;
+  const isSpinner = personality.spinAffinity > 0.5;
+  const pressure = target ? (battingScore / target) : (wickets / 10);
+
+  // Analyze batter shot history
+  const favoriteSide = shotHistory.filter(s => s === "pull" || s === "cut").length > shotHistory.filter(s => s === "drive" || s === "defense").length;
+  
+  let candidates = [...DELIVERY_TYPES];
+  
+  if (pressure > 0.8 && personality.aggression > 0.7) {
+    candidates = candidates.filter(d => d.speed > 130 || d.id === "yorker");
+  } else if (isSpinner) {
+    candidates = candidates.filter(d => d.speed < 100);
+  } else if (favoriteSide) {
+    candidates = candidates.filter(d => d.id !== "pull" && d.id !== "cut");
+  }
+  
+  if (candidates.length === 0) candidates = DELIVERY_TYPES;
+  return candidates[Math.floor(Math.random() * candidates.length)].id;
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  MAIN GAME COMPONENT
+// ══════════════════════════════════════════════════════════════════
+export default function CricketGame() {
+  // ── SCREEN STATE ────────────────────────────────────────────────
+  const [screen, setScreen] = useState("splash"); // splash | setup | batting | bowling | innings_break | result
+  
+  // ── MATCH CONFIG ───────────────────────────────────────────────
+  const [config, setConfig] = useState({
+    overs: 5,
+    stadium: STADIUMS[0],
+    opponent: PLAYERS.bowl[0],
+    playerBatFirst: true,
+  });
+
+  // ── INNINGS STATE ───────────────────────────────────────────────
+  const [innings, setInnings] = useState(1);
+  const [scores, setScores] = useState([{ runs: 0, wickets: 0, balls: 0, extras: 0 }, { runs: 0, wickets: 0, balls: 0, extras: 0 }]);
+  const [batters, setBatters] = useState([
+    { ...PLAYERS.bat[0], runs: 0, balls: 0, fours: 0, sixes: 0 },
+    { ...PLAYERS.bat[1], runs: 0, balls: 0, fours: 0, sixes: 0 },
+  ]);
+  const [currentBatter, setCurrentBatter] = useState(0); // index into batters
+  const [nextBatIdx, setNextBatIdx] = useState(2);
+  const [ballWear, setBallWear] = useState(0);
+  const [shotHistory, setShotHistory] = useState([]);
+  
+  // ── DELIVERY STATE ──────────────────────────────────────────────
+  const [deliveryPhase, setDeliveryPhase] = useState("select"); // select | timing | result
+  const [selectedShot, setSelectedShot] = useState(null);
+  const [selectedDelivery, setSelectedDelivery] = useState("straight");
+  const [timingWindow, setTimingWindow] = useState(0); // 0→1
+  const [timingActive, setTimingActive] = useState(false);
+  const [lastResult, setLastResult] = useState(null);
+  const [commentary, setCommentary] = useState("Welcome to the stadium! The crowd is buzzing with excitement...");
+  const [commentaryQueue, setCommentaryQueue] = useState([]);
+  
+  // ── MOMENTUM / ATMOSPHERE ───────────────────────────────────────
+  const [momentum, setMomentum] = useState(50); // 0-100
+  const [crowdIntensity, setCrowdIntensity] = useState(60);
+  const [freeHit, setFreeHit] = useState(false);
+  
+  // ── ANIMATION STATE ─────────────────────────────────────────────
+  const [ballAnim, setBallAnim] = useState(false);
+  const [shotAnim, setShotAnim] = useState(null);
+  const [celebAnim, setCelebAnim] = useState(null); // "six" | "wicket" | "fifty" | "century"
+  
+  // ── PITCH DISPLAY ───────────────────────────────────────────────
+  const [pitchMap, setPitchMap] = useState([]);
+  
+  const timingRef = useRef(null);
+  const animFrameRef = useRef(null);
+  
+  // ── DERIVED ─────────────────────────────────────────────────────
+  const inningsIdx = innings - 1;
+  const curScore = scores[inningsIdx];
+  const totalBalls = config.overs * 6;
+  const isPlayerBatting = (innings === 1 && config.playerBatFirst) || (innings === 2 && !config.playerBatFirst);
+  const target = innings === 2 ? scores[0].runs + 1 : null;
+  const oversStr = `${Math.floor(curScore.balls / 6)}.${curScore.balls % 6}`;
+  const runRate = curScore.balls > 0 ? ((curScore.runs / curScore.balls) * 6).toFixed(2) : "0.00";
+  const reqRate = target ? (((target - curScore.runs) / Math.max(1, totalBalls - curScore.balls)) * 6).toFixed(2) : null;
+  
+  // ══════════════════════════════════════════════════════════════
+  //  TIMING BAR ANIMATION
+  // ══════════════════════════════════════════════════════════════
+  const startTimingBar = useCallback(() => {
+    setTimingActive(true);
+    setTimingWindow(0);
+    let val = 0;
+    const speed = 0.018 + Math.random() * 0.012;
+    const tick = () => {
+      val += speed;
+      if (val >= 1) val = 0;
+      setTimingWindow(val);
+      animFrameRef.current = requestAnimationFrame(tick);
+    };
+    animFrameRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  const stopTimingBar = useCallback(() => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    setTimingActive(false);
+    return timingWindow;
+  }, [timingWindow]);
+
+  // ══════════════════════════════════════════════════════════════
+  //  BOWL BALL (AI batting - not implemented as interactive for AI)
+  //  PLAY SHOT (player batting)
+  // ══════════════════════════════════════════════════════════════
+  const executeDelivery = useCallback((shotId, timing) => {
+    const deliveryId = isPlayerBatting ? aiSelectDelivery({
+      ballsLeft: totalBalls - curScore.balls,
+      wickets: curScore.wickets,
+      target, battingScore: curScore.runs,
+      shotHistory,
+    }, config.opponent) : selectedDelivery;
+    
+    const delivery = calcDelivery(deliveryId, config.stadium.pitch, ballWear);
+    const batRating = isPlayerBatting ? batters[currentBatter].bat : 75;
+    const result = resolveShot(shotId, delivery, timing, batRating);
+    
+    // Extras
+    const isWide = !isPlayerBatting && Math.random() < 0.04;
+    const isNoball = !isPlayerBatting && Math.random() < 0.02;
+    
+    setBallAnim(true);
+    setTimeout(() => setBallAnim(false), 600);
+    
+    // Pitch map
+    const px = 0.3 + Math.random() * 0.4;
+    const py = delivery.bounce > 0.7 ? 0.2 : delivery.bounce < 0.3 ? 0.8 : 0.4 + Math.random() * 0.3;
+    setPitchMap(prev => [...prev.slice(-11), { x: px, y: py, type: result.isOut ? "danger" : result.runs >= 4 ? "good" : "normal" }]);
+    
+    if (isWide) {
+      setCommentary(pickComment("wide"));
+      setScores(prev => {
+        const n = [...prev];
+        n[inningsIdx] = { ...n[inningsIdx], runs: n[inningsIdx].runs + 1, extras: n[inningsIdx].extras + 1 };
+        return n;
+      });
+      setFreeHit(false);
+      return;
+    }
+    if (isNoball) {
+      setCommentary(pickComment("noball"));
+      setFreeHit(true);
+      setScores(prev => {
+        const n = [...prev];
+        n[inningsIdx] = { ...n[inningsIdx], runs: n[inningsIdx].runs + 1, extras: n[inningsIdx].extras + 1 };
+        return n;
+      });
+      return;
+    }
+    
+    setFreeHit(false);
+    setBallWear(w => Math.min(80, w + 1));
+    setShotHistory(h => [...h.slice(-19), shotId]);
+    
+    // Ball result
+    if (result.isOut && !freeHit) {
+      setShotAnim("wicket");
+      setCelebAnim("wicket");
+      setCommentary(pickComment("wicket") + ` ${batters[currentBatter].name} goes for ${batters[currentBatter].runs}!`);
+      setTimeout(() => setCelebAnim(null), 2200);
+      setScores(prev => {
+        const n = [...prev];
+        n[inningsIdx] = { ...n[inningsIdx], balls: n[inningsIdx].balls + 1, wickets: n[inningsIdx].wickets + 1 };
+        return n;
+      });
+      setMomentum(m => Math.max(0, Math.min(100, isPlayerBatting ? m - 20 : m + 20)));
+      setCrowdIntensity(c => Math.min(100, c + 25));
+      // New batter
+      if (curScore.wickets + 1 < 10 && nextBatIdx < PLAYERS.bat.length) {
+        setBatters(prev => {
+          const n = [...prev];
+          n[currentBatter] = { ...PLAYERS.bat[nextBatIdx], runs: 0, balls: 0, fours: 0, sixes: 0 };
+          return n;
+        });
+        setNextBatIdx(i => i + 1);
+      }
+    } else {
+      const runs = result.runs;
+      // Commentary
+      const commentType = runs === 6 ? "six" : runs === 4 ? "four" : runs === 3 ? "three" : runs === 2 ? "two" : runs === 1 ? "one" : "dot";
+      let comment = pickComment(commentType);
+      
+      // Milestones
+      const newBatterRuns = batters[currentBatter].runs + runs;
+      if ((batters[currentBatter].runs < 50 && newBatterRuns >= 50) || (batters[currentBatter].runs < 100 && newBatterRuns >= 100)) {
+        comment = pickComment("milestone") + ` ${batters[currentBatter].name} reaches ${newBatterRuns >= 100 ? "100" : "50"}!`;
+        setCelebAnim(newBatterRuns >= 100 ? "century" : "fifty");
+        setTimeout(() => setCelebAnim(null), 2500);
+      }
+      
+      if (runs === 6) { setShotAnim("six"); setCelebAnim("six"); setTimeout(() => setCelebAnim(null), 1800); }
+      else if (runs === 4) setShotAnim("four");
+      else setShotAnim(runs === 0 ? "dot" : "run");
+      
+      setCommentary(comment);
+      setScores(prev => {
+        const n = [...prev];
+        n[inningsIdx] = { ...n[inningsIdx], runs: n[inningsIdx].runs + runs, balls: n[inningsIdx].balls + 1 };
+        return n;
+      });
+      setBatters(prev => {
+        const n = [...prev];
+        n[currentBatter] = {
+          ...n[currentBatter],
+          runs: n[currentBatter].runs + runs,
+          balls: n[currentBatter].balls + 1,
+          fours: n[currentBatter].fours + (runs === 4 ? 1 : 0),
+          sixes: n[currentBatter].sixes + (runs === 6 ? 1 : 0),
+        };
+        return n;
+      });
+      if (runs % 2 === 1) setCurrentBatter(c => 1 - c);
+      setMomentum(m => Math.max(0, Math.min(100, isPlayerBatting ? m + (runs * 3 - 2) : m - (runs * 3 - 2))));
+      setCrowdIntensity(c => Math.min(100, c + (runs === 6 ? 20 : runs === 4 ? 12 : 2)));
+    }
+    
+    setTimeout(() => setShotAnim(null), 800);
+    setLastResult(result);
+    setDeliveryPhase("select");
+    setSelectedShot(null);
+    
+    // Check innings end
+    const newBalls = curScore.balls + 1;
+    const newWickets = curScore.wickets + (result.isOut && !freeHit ? 1 : 0);
+    if (newBalls >= totalBalls || newWickets >= 10) {
+      setTimeout(() => {
+        if (innings === 1) {
+          setInnings(2);
+          setDeliveryPhase("select");
+          setSelectedShot(null);
+          setBallWear(0);
+          setShotHistory([]);
+          setPitchMap([]);
+          setMomentum(50);
+          setBatters([
+            { ...PLAYERS.bat[0], runs: 0, balls: 0, fours: 0, sixes: 0 },
+            { ...PLAYERS.bat[1], runs: 0, balls: 0, fours: 0, sixes: 0 },
+          ]);
+          setNextBatIdx(2);
+          setCurrentBatter(0);
+          setScreen("innings_break");
+        } else {
+          setScreen("result");
+        }
+      }, 1200);
+    }
+    
+    // Chase check
+    if (target && curScore.runs + (result.isOut ? 0 : result.runs) >= target) {
+      setTimeout(() => setScreen("result"), 1200);
+    }
+  }, [isPlayerBatting, curScore, config, batters, currentBatter, shotHistory, ballWear, freeHit, innings, inningsIdx, totalBalls, target, nextBatIdx, selectedDelivery]);
+
+  // ══════════════════════════════════════════════════════════════
+  //  SHOT BUTTON CLICK (timing trigger)
+  // ══════════════════════════════════════════════════════════════
+  const handleShotSelect = (shotId) => {
+    if (deliveryPhase !== "select" || !isPlayerBatting) return;
+    setSelectedShot(shotId);
+    setDeliveryPhase("timing");
+    startTimingBar();
+  };
+
+  const handleTimingClick = useCallback(() => {
+    if (deliveryPhase !== "timing") return;
+    const t = stopTimingBar();
+    setDeliveryPhase("result");
+    executeDelivery(selectedShot, t);
+  }, [deliveryPhase, stopTimingBar, executeDelivery, selectedShot]);
+
+  // AI turn (bowling innings)
+  useEffect(() => {
+    if (!isPlayerBatting && screen === "batting" && deliveryPhase === "select") {
+      const delay = 1200 + Math.random() * 800;
+      const t = setTimeout(() => {
+        const aiShot = SHOT_ZONES[Math.floor(Math.random() * SHOT_ZONES.length)].id;
+        const aiTiming = 0.3 + Math.random() * 0.4;
+        executeDelivery(aiShot, aiTiming);
+      }, delay);
+      return () => clearTimeout(t);
+    }
+  }, [isPlayerBatting, screen, deliveryPhase, executeDelivery]);
+
+  // Crowd decay
+  useEffect(() => {
+    const t = setInterval(() => {
+      setCrowdIntensity(c => Math.max(40, c - 1));
+    }, 3000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ══════════════════════════════════════════════════════════════
+  //  RESULT CALCULATION
+  // ══════════════════════════════════════════════════════════════
+  const getResult = () => {
+    const s1 = scores[0].runs; const s2 = scores[1].runs;
+    if (config.playerBatFirst) {
+      if (s1 > s2) return { winner: "You", margin: `${s1 - s2} runs`, type: "win" };
+      if (s2 > s1) return { winner: "Opponent", margin: `${10 - scores[1].wickets} wickets`, type: "loss" };
+      return { winner: null, margin: "Tie", type: "tie" };
+    } else {
+      if (s2 > s1) return { winner: "You", margin: `${10 - scores[1].wickets} wickets`, type: "win" };
+      if (s1 > s2) return { winner: "Opponent", margin: `${s1 - s2} runs`, type: "loss" };
+      return { winner: null, margin: "Tie", type: "tie" };
+    }
+  };
+
+  // ══════════════════════════════════════════════════════════════
+  //  RENDER SCREENS
+  // ══════════════════════════════════════════════════════════════
+
+  if (screen === "splash") return <SplashScreen onStart={() => setScreen("setup")} />;
+  if (screen === "setup") return <SetupScreen config={config} setConfig={setConfig} onStart={() => { setScreen("batting"); }} />;
+  if (screen === "innings_break") return (
+    <InningsBreak
+      scores={scores} config={config}
+      onContinue={() => setScreen("batting")}
+    />
+  );
+  if (screen === "result") return (
+    <ResultScreen
+      scores={scores} result={getResult()} config={config}
+      onRestart={() => {
+        setScores([{ runs: 0, wickets: 0, balls: 0, extras: 0 }, { runs: 0, wickets: 0, balls: 0, extras: 0 }]);
+        setInnings(1); setBallWear(0); setShotHistory([]); setPitchMap([]);
+        setMomentum(50); setCrowdIntensity(60); setFreeHit(false);
+        setBatters([{ ...PLAYERS.bat[0], runs: 0, balls: 0, fours: 0, sixes: 0 }, { ...PLAYERS.bat[1], runs: 0, balls: 0, fours: 0, sixes: 0 }]);
+        setNextBatIdx(2); setCurrentBatter(0); setLastResult(null); setDeliveryPhase("select");
+        setScreen("setup");
+      }}
+    />
+  );
+
+  // ── MAIN GAME SCREEN ─────────────────────────────────────────
+  return (
+    <div style={S.gameWrap}>
+      {/* CELEBRATION OVERLAY */}
+      {celebAnim && <CelebrationOverlay type={celebAnim} batter={batters[currentBatter].name} />}
+      
+      {/* STADIUM BACKGROUND */}
+      <StadiumView
+        crowdIntensity={crowdIntensity}
+        momentum={momentum}
+        ballAnim={ballAnim}
+        shotAnim={shotAnim}
+        config={config}
+        freeHit={freeHit}
+      />
+
+      {/* SCORE OVERLAY */}
+      <ScoreOverlay
+        curScore={curScore}
+        innings={innings}
+        config={config}
+        oversStr={oversStr}
+        runRate={runRate}
+        reqRate={reqRate}
+        target={target}
+        batters={batters}
+        currentBatter={currentBatter}
+        momentum={momentum}
+        freeHit={freeHit}
+        isPlayerBatting={isPlayerBatting}
+      />
+
+      {/* COMMENTARY BAR */}
+      <CommentaryBar text={commentary} lastResult={lastResult} shotAnim={shotAnim} />
+
+      {/* PITCH MAP */}
+      <PitchMapDisplay pitchMap={pitchMap} />
+
+      {/* CONTROLS */}
+      {isPlayerBatting ? (
+        <BattingControls
+          deliveryPhase={deliveryPhase}
+          selectedShot={selectedShot}
+          timingWindow={timingWindow}
+          timingActive={timingActive}
+          onShotSelect={handleShotSelect}
+          onTimingClick={handleTimingClick}
+          shotAnim={shotAnim}
+          lastResult={lastResult}
+        />
+      ) : (
+        <BowlingControls
+          deliveryPhase={deliveryPhase}
+          selectedDelivery={selectedDelivery}
+          setSelectedDelivery={setSelectedDelivery}
+          config={config}
+          curScore={curScore}
+          shotAnim={shotAnim}
+        />
+      )}
+
+      {/* WATERMARK */}
+      <div style={S.watermark}>MADE BY HOSSAIN AZMAL</div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  SPLASH SCREEN
+// ══════════════════════════════════════════════════════════════════
+function SplashScreen({ onStart }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 60); return () => clearInterval(t); }, []);
+  return (
+    <div style={S.splash}>
+      <div style={S.splashBg} />
+      <div style={S.splashGlow} />
+      <div style={S.splashContent}>
+        <div style={{ ...S.splashBadge, transform: `rotate(${Math.sin(tick * 0.04) * 3}deg)` }}>🏏</div>
+        <h1 style={S.splashTitle}>ULTRA CRICKET</h1>
+        <p style={S.splashSub}>NEXT-GENERATION SIMULATION</p>
+        <div style={S.splashDivider} />
+        <div style={S.splashFeats}>
+          {["⚡ Physics Engine","🧠 Adaptive AI","🎙️ Live Commentary","🏟️ Stadium Atmosphere"].map((f,i) => (
+            <span key={i} style={{ ...S.splashFeat, animationDelay: `${i * 0.15}s` }}>{f}</span>
+          ))}
+        </div>
+        <button style={S.splashBtn} onClick={onStart}>
+          <span>PLAY NOW</span>
+          <div style={S.btnShine} />
+        </button>
+        <p style={S.splashCopy}>MADE BY HOSSAIN AZMAL</p>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  SETUP SCREEN
+// ══════════════════════════════════════════════════════════════════
+function SetupScreen({ config, setConfig, onStart }) {
+  return (
+    <div style={S.setup}>
+      <div style={S.setupBg} />
+      <div style={S.setupBox}>
+        <h2 style={S.setupTitle}>⚙️ MATCH SETUP</h2>
+        
+        <div style={S.setupGrid}>
+          <SetupRow label="OVERS">
+            {[5,10,15,20].map(o => (
+              <button key={o} style={{ ...S.pill, ...(config.overs === o ? S.pillActive : {}) }}
+                onClick={() => setConfig(c => ({ ...c, overs: o }))}>{o}</button>
+            ))}
+          </SetupRow>
+          
+          <SetupRow label="STADIUM">
+            {STADIUMS.map(s => (
+              <button key={s.name} style={{ ...S.pill, ...(config.stadium.name === s.name ? S.pillActive : {}) }}
+                onClick={() => setConfig(c => ({ ...c, stadium: s }))}>{s.name.split(" ")[0]}</button>
+            ))}
+          </SetupRow>
+          
+          <SetupRow label="OPPONENT">
+            {PLAYERS.bowl.map(p => (
+              <button key={p.name} style={{ ...S.pill, ...(config.opponent.name === p.name ? S.pillActive : {}) }}
+                onClick={() => setConfig(c => ({ ...c, opponent: p }))}>{p.name}</button>
+            ))}
+          </SetupRow>
+          
+          <SetupRow label="BAT FIRST?">
+            <button style={{ ...S.pill, ...(config.playerBatFirst ? S.pillActive : {}) }}
+              onClick={() => setConfig(c => ({ ...c, playerBatFirst: true }))}>YOU BAT</button>
+            <button style={{ ...S.pill, ...(!config.playerBatFirst ? S.pillActive : {}) }}
+              onClick={() => setConfig(c => ({ ...c, playerBatFirst: false }))}>THEY BAT</button>
+          </SetupRow>
+        </div>
+
+        <div style={S.setupInfo}>
+          <span>📍 {config.stadium.name}, {config.stadium.city}</span>
+          <span>🌿 Pitch: <b>{config.stadium.pitch.toUpperCase()}</b></span>
+          <span>👥 Crowd: {config.stadium.crowd.toLocaleString()}</span>
+        </div>
+
+        <button style={S.startBtn} onClick={onStart}>
+          🏏 START MATCH
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SetupRow({ label, children }) {
+  return (
+    <div style={S.setupRow}>
+      <span style={S.setupLabel}>{label}</span>
+      <div style={S.setupOptions}>{children}</div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  STADIUM VIEW
+// ══════════════════════════════════════════════════════════════════
+function StadiumView({ crowdIntensity, momentum, ballAnim, shotAnim, config, freeHit }) {
+  const hue = momentum > 60 ? 160 : momentum < 40 ? 0 : 40;
+  const glow = shotAnim === "six" ? "rgba(255,215,0,0.5)" : shotAnim === "wicket" ? "rgba(255,50,50,0.4)" : "rgba(0,0,0,0)";
+  
+  return (
+    <div style={{ ...S.stadium, background: `radial-gradient(ellipse at 50% 30%, #1a4a2e 0%, #0d2818 60%, #050e09 100%)` }}>
+      {/* Sky gradient */}
+      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(180deg, hsl(${hue},60%,12%) 0%, transparent 40%)`, transition: "background 2s" }} />
+      
+      {/* Crowd stands */}
+      <CrowdStands intensity={crowdIntensity} />
+      
+      {/* Pitch */}
+      <div style={S.pitchArea}>
+        <div style={S.pitch} />
+        <div style={S.crease} />
+        <div style={S.crease2} />
+        {/* Stumps */}
+        <div style={S.stumps}>
+          {[0,1,2].map(i => <div key={i} style={S.stump} />)}
+        </div>
+        <div style={{ ...S.stumps, bottom: 8 }}>
+          {[0,1,2].map(i => <div key={i} style={S.stump} />)}
+        </div>
+      </div>
+      
+      {/* Outfield */}
+      <div style={S.outfield} />
+      
+      {/* Ball animation */}
+      {ballAnim && <div style={{ ...S.ball, animation: "ballFly 0.6s ease-out forwards" }} />}
+      
+      {/* Glow effect */}
+      <div style={{ position: "absolute", inset: 0, background: glow, transition: "background 0.3s", pointerEvents: "none" }} />
+      
+      {/* Free Hit badge */}
+      {freeHit && <div style={S.freeHitBadge}>⚡ FREE HIT</div>}
+    </div>
+  );
+}
+
+function CrowdStands({ intensity }) {
+  const rows = 4;
+  const cols = 40;
+  return (
+    <div style={S.stands}>
+      {Array.from({ length: rows }, (_, r) => (
+        <div key={r} style={{ display: "flex", gap: 2, marginBottom: 2, justifyContent: "center" }}>
+          {Array.from({ length: cols }, (_, c) => {
+            const active = Math.random() < intensity / 100;
+            const hue = Math.floor(Math.random() * 360);
+            return <div key={c} style={{ width: 6, height: 8, borderRadius: 2, background: active ? `hsl(${hue},70%,60%)` : "#222", opacity: 0.7 + r * 0.07 }} />;
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  SCORE OVERLAY
+// ══════════════════════════════════════════════════════════════════
+function ScoreOverlay({ curScore, innings, config, oversStr, runRate, reqRate, target, batters, currentBatter, momentum, freeHit, isPlayerBatting }) {
+  const pct = momentum / 100;
+  const moColor = momentum > 60 ? "#00e676" : momentum < 40 ? "#ff1744" : "#ffb300";
+  
+  return (
+    <div style={S.scoreOverlay}>
+      {/* Team & Score */}
+      <div style={S.scoreMain}>
+        <div style={S.teamLabel}>{isPlayerBatting ? "🏏 YOUR INNINGS" : "🤖 " + config.opponent.name.toUpperCase()}</div>
+        <div style={S.bigScore}>
+          <span style={S.runs}>{curScore.runs}</span>
+          <span style={S.slash}>/</span>
+          <span style={S.wickets}>{curScore.wickets}</span>
+        </div>
+        <div style={S.overs}>{oversStr} overs • {config.overs} max</div>
+        {target && <div style={S.target}>TARGET: {target} | NEED: {Math.max(0, target - curScore.runs)} off {(config.overs * 6 - curScore.balls)} balls</div>}
+        {curScore.extras > 0 && <div style={S.extras}>Extras: {curScore.extras}</div>}
+      </div>
+      
+      {/* Rate bar */}
+      <div style={S.rateRow}>
+        <span style={S.rateLabel}>RR: {runRate}</span>
+        {reqRate && <span style={{ ...S.rateLabel, color: parseFloat(reqRate) > parseFloat(runRate) + 2 ? "#ff1744" : "#00e676" }}>RRR: {reqRate}</span>}
+        <span style={S.inningsTag}>INN {innings}</span>
+      </div>
+      
+      {/* Momentum bar */}
+      <div style={S.momentumWrap}>
+        <span style={S.momentumLabel}>MOMENTUM</span>
+        <div style={S.momentumBar}>
+          <div style={{ ...S.momentumFill, width: `${momentum}%`, background: `linear-gradient(90deg, ${moColor}88, ${moColor})` }} />
+          <div style={S.momentumCenter} />
+        </div>
+      </div>
+      
+      {/* Batters */}
+      <div style={S.batterRow}>
+        {batters.map((b, i) => (
+          <div key={i} style={{ ...S.batter, ...(i === currentBatter ? S.batterActive : {}) }}>
+            <span style={S.batterName}>{i === currentBatter ? "⚡ " : ""}{b.name.split(" ").pop()}</span>
+            <span style={S.batterScore}>{b.runs}<span style={S.batterBalls}>({b.balls})</span></span>
+            <span style={S.batterMeta}>4s:{b.fours} 6s:{b.sixes}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  COMMENTARY BAR
+// ══════════════════════════════════════════════════════════════════
+function CommentaryBar({ text, shotAnim }) {
+  const color = shotAnim === "six" ? "#ffd700" : shotAnim === "wicket" ? "#ff4444" : shotAnim === "four" ? "#00e5ff" : "#e0e0e0";
+  return (
+    <div style={S.commentary}>
+      <div style={{ ...S.commentaryDot, background: color }} />
+      <span style={{ ...S.commentaryText, color }}>{text}</span>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PITCH MAP
+// ══════════════════════════════════════════════════════════════════
+function PitchMapDisplay({ pitchMap }) {
+  return (
+    <div style={S.pitchMapWrap}>
+      <div style={S.pitchMapLabel}>PITCH MAP</div>
+      <div style={S.pitchMapArea}>
+        {pitchMap.map((p, i) => (
+          <div key={i} style={{
+            position: "absolute",
+            left: `${p.x * 100}%`, top: `${p.y * 100}%`,
+            width: 7, height: 7, borderRadius: "50%",
+            background: p.type === "danger" ? "#ff1744" : p.type === "good" ? "#00e676" : "#ffb300",
+            transform: "translate(-50%,-50%)", opacity: 0.7 + (i / pitchMap.length) * 0.3,
+            border: "1px solid rgba(255,255,255,0.3)"
+          }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  BATTING CONTROLS
+// ══════════════════════════════════════════════════════════════════
+function BattingControls({ deliveryPhase, selectedShot, timingWindow, timingActive, onShotSelect, onTimingClick, shotAnim, lastResult }) {
+  const timingPct = timingWindow * 100;
+  const isPerfect = timingPct > 42 && timingPct < 58;
+  const isGood = timingPct > 35 && timingPct < 65;
+  const zone = isPerfect ? "PERFECT" : isGood ? "GOOD" : "EARLY/LATE";
+  const zoneColor = isPerfect ? "#00e676" : isGood ? "#ffb300" : "#ff4444";
+  
+  return (
+    <div style={S.controls}>
+      <div style={S.controlsTitle}>🏏 SELECT YOUR SHOT</div>
+      
+      {deliveryPhase === "timing" && (
+        <div style={S.timingSection} onClick={onTimingClick}>
+          <div style={S.timingLabel}>TAP TO TIME! <span style={{ color: zoneColor }}>{zone}</span></div>
+          <div style={S.timingBarWrap}>
+            <div style={{ ...S.timingZone, left: "42%", width: "16%", background: "rgba(0,230,118,0.25)" }} />
+            <div style={{ ...S.timingZone, left: "35%", width: "30%", background: "rgba(255,179,0,0.15)" }} />
+            <div style={{ ...S.timingCursor, left: `${timingPct}%`, background: zoneColor, boxShadow: `0 0 12px ${zoneColor}` }} />
+          </div>
+          <div style={S.timingHint}>Selected: <b>{SHOT_ZONES.find(s => s.id === selectedShot)?.label}</b></div>
+        </div>
+      )}
+      
+      {deliveryPhase === "select" && (
+        <div style={S.shotGrid}>
+          {SHOT_ZONES.map(s => (
+            <button key={s.id} style={{ ...S.shotBtn, ...(s.risk > 0.2 ? S.shotBtnRisky : {}) }}
+              onClick={() => onShotSelect(s.id)}>
+              <span style={S.shotIcon}>{getShotIcon(s.id)}</span>
+              <span style={S.shotLabel}>{s.label}</span>
+              <div style={{ ...S.riskBar, width: `${s.risk * 100}%` }} />
+            </button>
+          ))}
+        </div>
+      )}
+      
+      {lastResult && deliveryPhase === "select" && (
+        <div style={{ ...S.resultPill, background: lastResult.isOut ? "#ff1744" : lastResult.runs >= 6 ? "#ffd700" : lastResult.runs >= 4 ? "#00e5ff" : "#333" }}>
+          {lastResult.isOut ? `OUT! ${lastResult.type?.toUpperCase()}` : lastResult.runs === 0 ? "• DOT BALL" : lastResult.runs === 6 ? "⬡ SIX!" : lastResult.runs === 4 ? "◈ FOUR!" : `+ ${lastResult.runs} RUN${lastResult.runs > 1 ? "S" : ""}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  BOWLING CONTROLS
+// ══════════════════════════════════════════════════════════════════
+function BowlingControls({ deliveryPhase, selectedDelivery, setSelectedDelivery, config, curScore, shotAnim }) {
+  return (
+    <div style={S.controls}>
+      <div style={S.controlsTitle}>🎯 AI BATTING — YOU BOWL</div>
+      <div style={S.bowlHint}>Select your delivery type. AI will bat automatically.</div>
+      <div style={S.bowlGrid}>
+        {DELIVERY_TYPES.map(d => (
+          <button key={d.id}
+            style={{ ...S.bowlBtn, ...(selectedDelivery === d.id ? S.bowlBtnActive : {}) }}
+            onClick={() => setSelectedDelivery(d.id)}>
+            <span style={S.bowlIcon}>{getBowlIcon(d.id)}</span>
+            <span style={S.bowlLabel}>{d.label}</span>
+            <span style={S.bowlSpeed}>{d.speed} km/h</span>
+          </button>
+        ))}
+      </div>
+      {deliveryPhase === "select" && (
+        <div style={S.aiWaiting}>⏳ AI is playing...</div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  INNINGS BREAK
+// ══════════════════════════════════════════════════════════════════
+function InningsBreak({ scores, config, onContinue }) {
+  const s1 = scores[0];
+  return (
+    <div style={S.break}>
+      <div style={S.breakBox}>
+        <div style={S.breakTitle}>🏟️ INNINGS BREAK</div>
+        <div style={S.breakScore}>
+          <span>{config.playerBatFirst ? "YOUR" : config.opponent.name.toUpperCase()}</span>
+          <span style={S.breakRuns}>{s1.runs}/{s1.wickets}</span>
+          <span style={S.breakOvers}>({Math.floor(s1.balls / 6)}.{s1.balls % 6} ov)</span>
+        </div>
+        <div style={S.breakTarget}>
+          Target: <b style={{ color: "#ffd700", fontSize: 28 }}>{s1.runs + 1}</b>
+        </div>
+        <div style={S.breakNeeded}>
+          {!config.playerBatFirst ? "YOUR TEAM" : config.opponent.name.toUpperCase()} need <b>{s1.runs + 1}</b> to win in {config.overs} overs
+        </div>
+        <button style={S.startBtn} onClick={onContinue}>⚡ START 2ND INNINGS</button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  RESULT SCREEN
+// ══════════════════════════════════════════════════════════════════
+function ResultScreen({ scores, result, config, onRestart }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => { setTimeout(() => setShow(true), 100); }, []);
+  return (
+    <div style={S.result}>
+      <div style={{ ...S.resultBox, opacity: show ? 1 : 0, transform: show ? "scale(1)" : "scale(0.8)", transition: "all 0.5s" }}>
+        <div style={S.resultEmoji}>{result.type === "win" ? "🏆" : result.type === "loss" ? "💔" : "🤝"}</div>
+        <div style={{ ...S.resultTitle, color: result.type === "win" ? "#ffd700" : result.type === "loss" ? "#ff4444" : "#aaa" }}>
+          {result.type === "win" ? "YOU WON!" : result.type === "loss" ? "YOU LOST" : "IT'S A TIE!"}
+        </div>
+        {result.winner && <div style={S.resultMargin}>{result.winner} won by {result.margin}</div>}
+        
+        <div style={S.scoreCard}>
+          {[0, 1].map(i => {
+            const s = scores[i];
+            const lbl = i === 0 ? (config.playerBatFirst ? "YOUR INNINGS" : config.opponent.name.toUpperCase()) : (config.playerBatFirst ? config.opponent.name.toUpperCase() : "YOUR INNINGS");
+            return (
+              <div key={i} style={S.scoreCardRow}>
+                <span style={S.scLabel}>{lbl}</span>
+                <span style={S.scScore}>{s.runs}/{s.wickets}</span>
+                <span style={S.scOvers}>({Math.floor(s.balls/6)}.{s.balls%6} ov)</span>
+                <span style={S.scRR}>RR: {s.balls > 0 ? ((s.runs/s.balls)*6).toFixed(2) : "0.00"}</span>
+              </div>
+            );
+          })}
+        </div>
+        
+        <button style={S.startBtn} onClick={onRestart}>🔄 PLAY AGAIN</button>
+        <div style={S.resultMark}>MADE BY HOSSAIN AZMAL</div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  CELEBRATION OVERLAY
+// ══════════════════════════════════════════════════════════════════
+function CelebrationOverlay({ type, batter }) {
+  const data = {
+    six: { emoji: "⬡", label: "SIX!", color: "#ffd700", bg: "rgba(255,215,0,0.15)" },
+    four: { emoji: "◈", label: "FOUR!", color: "#00e5ff", bg: "rgba(0,229,255,0.12)" },
+    wicket: { emoji: "💥", label: "WICKET!", color: "#ff1744", bg: "rgba(255,23,68,0.18)" },
+    fifty: { emoji: "⭐", label: "FIFTY!", color: "#7c4dff", bg: "rgba(124,77,255,0.15)" },
+    century: { emoji: "👑", label: "CENTURY!", color: "#ffd700", bg: "rgba(255,215,0,0.2)" },
+  }[type] || { emoji: "✨", label: "", color: "#fff", bg: "transparent" };
+  
+  return (
+    <div style={{ ...S.celebOverlay, background: data.bg }}>
+      <div style={{ ...S.celebEmoji, color: data.color }}>{data.emoji}</div>
+      <div style={{ ...S.celebLabel, color: data.color }}>{data.label}</div>
+      {(type === "fifty" || type === "century") && <div style={S.celebName}>{batter}</div>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════
+const getShotIcon = id => ({ drive:"🏏", pull:"💪", cut:"✂️", glance:"↩️", sweep:"🔄", lofted:"🚀", defense:"🛡️", flick:"⚡" }[id] || "🏏");
+const getBowlIcon = id => ({ straight:"⚡", outswinger:"↗️", inswinger:"↙️", bouncer:"💣", yorker:"🎯", offbreak:"🌀", legbreak:"🌀", googly:"😵" }[id] || "⚡");
+
+// ══════════════════════════════════════════════════════════════════
+//  STYLES
+// ══════════════════════════════════════════════════════════════════
+const S = {
+  gameWrap: { position: "relative", width: "100%", height: "100vh", minHeight: 600, background: "#050e09", overflow: "hidden", fontFamily: "'Orbitron', 'Exo 2', 'Courier New', monospace", userSelect: "none" },
+  watermark: { position: "absolute", bottom: 6, right: 10, fontSize: 9, color: "rgba(255,255,255,0.2)", letterSpacing: 1, zIndex: 100, pointerEvents: "none" },
+
+  // SPLASH
+  splash: { position: "relative", width: "100%", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", background: "#020b05" },
+  splashBg: { position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 60%, #0d3320 0%, #020b05 70%)" },
+  splashGlow: { position: "absolute", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,200,80,0.08) 0%, transparent 70%)", top: "20%", left: "50%", transform: "translateX(-50%)" },
+  splashContent: { position: "relative", zIndex: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: 24 },
+  splashBadge: { fontSize: 72, filter: "drop-shadow(0 0 20px #00c853)", transition: "transform 0.1s" },
+  splashTitle: { fontSize: 42, fontWeight: 900, letterSpacing: 8, color: "#fff", margin: 0, textShadow: "0 0 30px rgba(0,200,80,0.5)", fontFamily: "'Orbitron', monospace" },
+  splashSub: { fontSize: 11, letterSpacing: 6, color: "#00c853", margin: 0 },
+  splashDivider: { width: 80, height: 1, background: "linear-gradient(90deg, transparent, #00c853, transparent)", margin: "8px 0" },
+  splashFeats: { display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 340 },
+  splashFeat: { fontSize: 11, color: "#aaa", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "4px 10px", animation: "fadeIn 0.5s forwards" },
+  splashBtn: { position: "relative", overflow: "hidden", marginTop: 8, padding: "14px 48px", background: "linear-gradient(135deg, #00c853, #006b2b)", border: "none", borderRadius: 40, color: "#fff", fontSize: 16, fontWeight: 800, letterSpacing: 3, cursor: "pointer", boxShadow: "0 0 30px rgba(0,200,80,0.4)", transition: "transform 0.15s" },
+  btnShine: { position: "absolute", top: 0, left: "-60%", width: "40%", height: "100%", background: "rgba(255,255,255,0.2)", transform: "skewX(-20deg)", animation: "shine 2s infinite 1s" },
+  splashCopy: { fontSize: 9, color: "#333", letterSpacing: 2, margin: 0 },
+
+  // SETUP
+  setup: { position: "relative", width: "100%", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#030d07", overflow: "auto" },
+  setupBg: { position: "fixed", inset: 0, background: "radial-gradient(ellipse at 50% 0%, #0a2e16 0%, #020b05 60%)" },
+  setupBox: { position: "relative", zIndex: 2, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(0,200,80,0.2)", borderRadius: 20, padding: "28px 24px", maxWidth: 480, width: "90%", backdropFilter: "blur(10px)" },
+  setupTitle: { fontSize: 20, fontWeight: 800, color: "#00c853", textAlign: "center", margin: "0 0 20px", letterSpacing: 4 },
+  setupGrid: { display: "flex", flexDirection: "column", gap: 16 },
+  setupRow: { display: "flex", flexDirection: "column", gap: 6 },
+  setupLabel: { fontSize: 10, letterSpacing: 3, color: "#666" },
+  setupOptions: { display: "flex", flexWrap: "wrap", gap: 6 },
+  pill: { padding: "6px 12px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.04)", color: "#aaa", fontSize: 11, cursor: "pointer", transition: "all 0.2s" },
+  pillActive: { background: "rgba(0,200,80,0.2)", border: "1px solid #00c853", color: "#00c853", fontWeight: 700 },
+  setupInfo: { display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", margin: "16px 0", fontSize: 11, color: "#666" },
+  startBtn: { width: "100%", padding: "14px", background: "linear-gradient(135deg, #00c853, #006b2b)", border: "none", borderRadius: 12, color: "#fff", fontSize: 15, fontWeight: 800, letterSpacing: 2, cursor: "pointer", marginTop: 8 },
+
+  // STADIUM
+  stadium: { position: "absolute", top: 0, left: 0, right: 0, height: "52%", overflow: "hidden" },
+  stands: { position: "absolute", top: 0, left: 0, right: 0, padding: "6px 8px" },
+  pitchArea: { position: "absolute", bottom: 0, left: "50%", transform: "translateX(-50%)", width: 100, height: "65%" },
+  pitch: { position: "absolute", inset: 0, background: "linear-gradient(180deg, #8B7355 0%, #9E8C5A 50%, #8B7355 100%)", borderRadius: 4, boxShadow: "0 0 20px rgba(0,0,0,0.5)" },
+  crease: { position: "absolute", top: "15%", left: 0, right: 0, height: 2, background: "rgba(255,255,255,0.7)" },
+  crease2: { position: "absolute", bottom: "15%", left: 0, right: 0, height: 2, background: "rgba(255,255,255,0.7)" },
+  stumps: { position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 5 },
+  stump: { width: 3, height: 18, background: "#fff", borderRadius: 1, boxShadow: "0 0 4px rgba(255,255,255,0.5)" },
+  outfield: { position: "absolute", bottom: 0, left: 0, right: 0, height: "35%", background: "linear-gradient(180deg, #1a5c2a 0%, #0f3d1a 100%)", borderRadius: "50% 50% 0 0 / 20% 20% 0 0" },
+  ball: { position: "absolute", width: 12, height: 12, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #ff6b6b, #c0392b)", boxShadow: "0 0 8px rgba(255,100,100,0.6)", top: "40%", left: "50%", zIndex: 10 },
+  freeHitBadge: { position: "absolute", top: "30%", left: "50%", transform: "translateX(-50%)", background: "linear-gradient(135deg, #ffd700, #ff9800)", color: "#000", fontWeight: 900, fontSize: 13, letterSpacing: 2, padding: "6px 16px", borderRadius: 20, zIndex: 20, animation: "pulse 0.5s infinite alternate" },
+
+  // SCORE OVERLAY
+  scoreOverlay: { position: "absolute", top: 0, left: 0, right: 0, padding: "8px 12px", zIndex: 10, background: "linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%)" },
+  scoreMain: { display: "flex", flexDirection: "column", gap: 2 },
+  teamLabel: { fontSize: 9, letterSpacing: 3, color: "#00c853", fontWeight: 700 },
+  bigScore: { display: "flex", alignItems: "baseline", gap: 2 },
+  runs: { fontSize: 36, fontWeight: 900, color: "#fff", lineHeight: 1, textShadow: "0 0 10px rgba(255,255,255,0.3)" },
+  slash: { fontSize: 20, color: "#555" },
+  wickets: { fontSize: 24, color: "#ff4444", fontWeight: 700 },
+  overs: { fontSize: 11, color: "#888" },
+  target: { fontSize: 11, color: "#ffd700", fontWeight: 700, letterSpacing: 1 },
+  extras: { fontSize: 10, color: "#666" },
+  rateRow: { display: "flex", gap: 12, alignItems: "center", marginTop: 4 },
+  rateLabel: { fontSize: 11, color: "#aaa", letterSpacing: 1 },
+  inningsTag: { marginLeft: "auto", fontSize: 10, background: "rgba(0,200,80,0.2)", color: "#00c853", padding: "2px 8px", borderRadius: 10, letterSpacing: 1 },
+  momentumWrap: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 },
+  momentumLabel: { fontSize: 9, color: "#555", letterSpacing: 2, width: 80 },
+  momentumBar: { flex: 1, height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 2, position: "relative", overflow: "hidden" },
+  momentumFill: { height: "100%", borderRadius: 2, transition: "width 0.5s, background 0.5s" },
+  momentumCenter: { position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.3)" },
+  batterRow: { display: "flex", gap: 8, marginTop: 6 },
+  batter: { flex: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, padding: "4px 8px" },
+  batterActive: { background: "rgba(0,200,80,0.08)", border: "1px solid rgba(0,200,80,0.3)" },
+  batterName: { display: "block", fontSize: 10, color: "#00c853", fontWeight: 700, letterSpacing: 1 },
+  batterScore: { display: "block", fontSize: 16, color: "#fff", fontWeight: 900 },
+  batterBalls: { fontSize: 11, color: "#666", fontWeight: 400 },
+  batterMeta: { display: "block", fontSize: 9, color: "#555" },
+
+  // COMMENTARY
+  commentary: { position: "absolute", top: "54%", left: 0, right: 0, display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", zIndex: 10 },
+  commentaryDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
+  commentaryText: { fontSize: 12, fontStyle: "italic", letterSpacing: 0.5, lineHeight: 1.3 },
+
+  // PITCH MAP
+  pitchMapWrap: { position: "absolute", right: 8, top: "58%", width: 50, zIndex: 10 },
+  pitchMapLabel: { fontSize: 7, color: "#555", letterSpacing: 1, textAlign: "center", marginBottom: 2 },
+  pitchMapArea: { width: 50, height: 80, background: "rgba(139,115,85,0.2)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, position: "relative" },
+
+  // CONTROLS
+  controls: { position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(5,14,9,0.95)", borderTop: "1px solid rgba(0,200,80,0.15)", padding: "10px 12px 16px", zIndex: 20, backdropFilter: "blur(10px)" },
+  controlsTitle: { fontSize: 10, letterSpacing: 3, color: "#00c853", marginBottom: 8 },
+  
+  // BATTING
+  timingSection: { cursor: "pointer", padding: 4 },
+  timingLabel: { fontSize: 12, color: "#aaa", textAlign: "center", marginBottom: 6 },
+  timingBarWrap: { position: "relative", height: 24, background: "rgba(255,255,255,0.06)", borderRadius: 12, overflow: "hidden" },
+  timingZone: { position: "absolute", top: 0, bottom: 0, borderRadius: 12 },
+  timingCursor: { position: "absolute", top: 2, bottom: 2, width: 4, borderRadius: 2, transform: "translateX(-50%)", transition: "left 0.02s" },
+  timingHint: { fontSize: 10, color: "#666", textAlign: "center", marginTop: 4 },
+  shotGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 },
+  shotBtn: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "8px 4px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, cursor: "pointer", transition: "all 0.15s", position: "relative", overflow: "hidden" },
+  shotBtnRisky: { border: "1px solid rgba(255,100,100,0.2)" },
+  shotIcon: { fontSize: 18 },
+  shotLabel: { fontSize: 9, color: "#aaa", letterSpacing: 1 },
+  riskBar: { position: "absolute", bottom: 0, left: 0, height: 2, background: "rgba(255,100,100,0.5)", borderRadius: 1 },
+  resultPill: { marginTop: 8, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 800, textAlign: "center", letterSpacing: 2, color: "#fff" },
+  
+  // BOWLING
+  bowlHint: { fontSize: 10, color: "#666", marginBottom: 8 },
+  bowlGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 5 },
+  bowlBtn: { display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "6px 2px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, cursor: "pointer", transition: "all 0.15s" },
+  bowlBtnActive: { background: "rgba(0,200,80,0.12)", border: "1px solid rgba(0,200,80,0.4)" },
+  bowlIcon: { fontSize: 14 },
+  bowlLabel: { fontSize: 9, color: "#aaa", letterSpacing: 0.5 },
+  bowlSpeed: { fontSize: 8, color: "#555" },
+  aiWaiting: { fontSize: 11, color: "#555", textAlign: "center", marginTop: 6 },
+
+  // INNINGS BREAK
+  break: { position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(5,14,9,0.96)", zIndex: 100 },
+  breakBox: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(0,200,80,0.3)", borderRadius: 20, padding: 32, textAlign: "center", maxWidth: 340, width: "90%" },
+  breakTitle: { fontSize: 20, fontWeight: 800, color: "#00c853", letterSpacing: 4, marginBottom: 20 },
+  breakScore: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, marginBottom: 16 },
+  breakRuns: { fontSize: 52, fontWeight: 900, color: "#fff", lineHeight: 1 },
+  breakOvers: { fontSize: 12, color: "#666" },
+  breakTarget: { fontSize: 16, color: "#aaa", marginBottom: 8 },
+  breakNeeded: { fontSize: 12, color: "#888", marginBottom: 20 },
+
+  // RESULT
+  result: { position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(5,14,9,0.97)", zIndex: 100 },
+  resultBox: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "28px 24px", textAlign: "center", maxWidth: 380, width: "90%", backdropFilter: "blur(20px)" },
+  resultEmoji: { fontSize: 60, marginBottom: 8 },
+  resultTitle: { fontSize: 32, fontWeight: 900, letterSpacing: 4, marginBottom: 4 },
+  resultMargin: { fontSize: 14, color: "#888", marginBottom: 20 },
+  scoreCard: { background: "rgba(0,0,0,0.3)", borderRadius: 12, padding: 12, marginBottom: 20, display: "flex", flexDirection: "column", gap: 8 },
+  scoreCardRow: { display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" },
+  scLabel: { fontSize: 10, color: "#666", flex: 1, textAlign: "left" },
+  scScore: { fontSize: 18, fontWeight: 800, color: "#fff" },
+  scOvers: { fontSize: 10, color: "#555" },
+  scRR: { fontSize: 10, color: "#00c853" },
+  resultMark: { fontSize: 9, color: "#333", letterSpacing: 1 },
+
+  // CELEBRATION
+  celebOverlay: { position: "fixed", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 200, pointerEvents: "none" },
+  celebEmoji: { fontSize: 80, animation: "celebBounce 0.3s ease-out" },
+  celebLabel: { fontSize: 48, fontWeight: 900, letterSpacing: 6, textShadow: "0 0 40px currentColor" },
+  celebName: { fontSize: 16, color: "#aaa", letterSpacing: 3, marginTop: 8 },
+};
+
+// CSS Animations injected globally
+if (typeof document !== "undefined" && !document.getElementById("cricket-anim")) {
+  const style = document.createElement("style");
+  style.id = "cricket-anim";
+  style.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+    @keyframes ballFly { 0%{transform:translate(0,0) scale(1);opacity:1} 100%{transform:translate(-80px,-120px) scale(0.4);opacity:0} }
+    @keyframes shine { 0%{left:-60%} 100%{left:160%} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes pulse { from{transform:translateX(-50%) scale(1)} to{transform:translateX(-50%) scale(1.05)} }
+    @keyframes celebBounce { 0%{transform:scale(0.5)} 60%{transform:scale(1.2)} 100%{transform:scale(1)} }
+    * { box-sizing: border-box; }
+    ::-webkit-scrollbar { width: 4px; } 
+    ::-webkit-scrollbar-track { background: #000; }
+    ::-webkit-scrollbar-thumb { background: #00c853; border-radius: 2px; }
+    button:hover { filter: brightness(1.15); transform: scale(1.03); }
+    button:active { transform: scale(0.97); }
+  `;
+  document.head.appendChild(style);
+}
